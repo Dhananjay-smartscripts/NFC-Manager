@@ -9,6 +9,7 @@ import {
   View,
   TouchableOpacity,
   TextInput,
+  Image,
 } from 'react-native';
 import NfcManager, { Ndef, TagEvent } from 'react-native-nfc-manager';
 import { withNdef } from './utils/withNdef';
@@ -138,6 +139,15 @@ const App = () => {
       >
         {/* Header */}
         <View style={styles.header}>
+          <Image
+            source={
+              isDarkMode
+                ? require('./assets/mcards-white.png')
+                : require('./assets/mcards.png')
+            }
+            style={styles.logo}
+            resizeMode="contain"
+          />
           <Text style={[styles.title, { color: theme.text }]}>NFC Manager</Text>
           <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
             Read and write NFC tags with ease
@@ -387,11 +397,16 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   header: {
-    marginTop: 36,
-    paddingHorizontal: 24,
+    marginTop: 20,
+    paddingHorizontal: 20,
     paddingTop: 20,
-    paddingBottom: 24,
+    paddingBottom: 40,
     alignItems: 'center',
+  },
+  logo: {
+    width: 80,
+    height: 80,
+    marginBottom: 16,
   },
   title: {
     fontSize: 32,
