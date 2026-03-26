@@ -1,554 +1,281 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
+  Image,
+  Platform,
   SafeAreaView,
-  ScrollView,
   StatusBar,
   StyleSheet,
   Text,
+  TouchableOpacity,
   useColorScheme,
   View,
-  TouchableOpacity,
-  TextInput,
-  Image,
 } from 'react-native';
-import NfcManager, { Ndef, TagEvent } from 'react-native-nfc-manager';
+import NfcManager, { TagEvent } from 'react-native-nfc-manager';
 import { withNdef } from './utils/withNdef';
+import HelpScreen from './src/screens/HelpScreen';
+import OtherScreen from './src/screens/OtherScreen';
+import ReadScreen from './src/screens/ReadScreen';
+import WriteScreen from './src/screens/WriteScreen';
+import PopupMenu from './src/components/PopupMenu';
+import { buildNdefMessageMulti } from './src/utils/ndefBuilder';
+import { makeTheme, Tab } from './src/theme';
 
 const App = () => {
-  const isDarkMode = useColorScheme() === 'dark';
+  const isDark = useColorScheme() === 'dark';
+  const theme = makeTheme(isDark);
+
+  const [activeTab, setActiveTab] = useState<Tab>('READ');
   const [nfcSupported, setNfcSupported] = useState(false);
   const [nfcEnabled, setNfcEnabled] = useState(false);
-  const [scannedTag, setScannedTag] = useState<TagEvent | null>(null);
-  const [writeText, setWriteText] = useState('Hello from React Native NFC!');
-  const [message, setMessage] = useState('');
 
-  const theme = {
-    background: isDarkMode ? '#0F0F0F' : '#FFFFFF',
-    surface: isDarkMode ? '#1C1C1E' : '#F8F9FA',
-    cardBackground: isDarkMode ? '#2C2C2E' : '#FFFFFF',
-    primary: '#007AFF',
-    primaryDark: '#0056CC',
-    success: '#34C759',
-    warning: '#FF9500',
-    error: '#FF3B30',
-    text: isDarkMode ? '#FFFFFF' : '#000000',
-    textSecondary: isDarkMode ? '#AEAEB2' : '#6C6C70',
-    textTertiary: isDarkMode ? '#8E8E93' : '#8E8E93',
-    border: isDarkMode ? '#38383A' : '#E5E5E7',
-    shadow: isDarkMode ? '#000000' : '#000000',
-  };
+  const [scannedTag, setScannedTag] = useState<TagEvent | null>(null);
+  const [isScanning, setIsScanning] = useState(false);
+  const [readMessage, setReadMessage] = useState('');
+
+  const [writeMessage, setWriteMessage] = useState('');
+  const [isWriting, setIsWriting] = useState(false);
+
+  const [helpVisible, setHelpVisible] = useState(false);
+  const [menuVisible, setMenuVisible] = useState(false);
 
   useEffect(() => {
-    async function initNfc() {
+    (async () => {
       try {
         const supported = await NfcManager.isSupported();
         setNfcSupported(supported);
-
         if (supported) {
           await NfcManager.start();
-          const enabled = await NfcManager.isEnabled();
-          setNfcEnabled(enabled);
+          setNfcEnabled(await NfcManager.isEnabled());
         }
-      } catch (ex: any) {
-        console.warn('NFC initialization error', ex);
-        setMessage(`NFC init error: ${ex.message}`);
+      } catch (error) {
+        console.warn('NFC init error', error);
       }
-    }
-    initNfc();
+    })();
   }, []);
 
-  const readNfc = useCallback(async () => {
+  const onStartScan = useCallback(async () => {
     if (!nfcSupported || !nfcEnabled) {
-      setMessage(
+      setReadMessage(
         !nfcSupported
-          ? 'NFC not supported'
-          : 'NFC disabled; enable in settings',
+          ? 'NFC not supported on this device'
+          : 'Please enable NFC in Settings',
       );
       return;
     }
 
-    setMessage('Ready to scan...');
+    setIsScanning(true);
     setScannedTag(null);
+    setReadMessage('');
 
-    await withNdef(async () => {
-      const tag = await NfcManager.getTag();
-      setScannedTag(tag);
-
-      let parsed = 'No NDEF data.';
-      if (tag?.ndefMessage?.length) {
-        const rec = tag.ndefMessage[0];
-        if (
-          rec.tnf === Ndef.TNF_WELL_KNOWN &&
-          rec.type.toString() === Ndef.RTD_TEXT.toString()
-        ) {
-          parsed = Ndef.text.decodePayload(new Uint8Array(rec.payload));
-        } else {
-          parsed = `Raw payload: ${Ndef.util.bytesToHexString(rec.payload)}`;
-        }
-      }
-      setMessage(`Tag read: ${parsed}`);
-    }, 'Approach tag to read');
+    try {
+      await withNdef(async () => {
+        const tag = await NfcManager.getTag();
+        setScannedTag(tag);
+      }, 'Approach tag to read');
+    } catch {
+      setReadMessage('Scan cancelled');
+    } finally {
+      setIsScanning(false);
+    }
   }, [nfcSupported, nfcEnabled]);
 
-  const writeNfc = useCallback(async () => {
-    if (!nfcSupported || !nfcEnabled) {
-      setMessage(!nfcSupported ? 'NFC not supported' : 'Enable NFC first');
-      return;
-    }
-    if (!writeText.trim()) {
-      setMessage('Enter text to write');
-      return;
+  const onWrite = useCallback(
+    async (records: { typeId: string; formData: Record<string, string> }[]) => {
+      if (!nfcSupported || !nfcEnabled) {
+        setWriteMessage(!nfcSupported ? 'NFC not supported' : 'Enable NFC first');
+        return;
+      }
+
+      setIsWriting(true);
+      setWriteMessage('Approach tag to write...');
+
+      try {
+        await withNdef(async () => {
+          const bytes: number[] = buildNdefMessageMulti(records);
+          await NfcManager.ndefHandler.writeNdefMessage(bytes);
+          setWriteMessage('Write success');
+        }, 'Approach tag to write');
+      } catch (error: any) {
+        setWriteMessage(`Write failed: ${error?.message ?? 'Unknown error'}`);
+      } finally {
+        setIsWriting(false);
+      }
+    },
+    [nfcSupported, nfcEnabled],
+  );
+
+  const renderContent = () => {
+    if (activeTab === 'READ') {
+      return (
+        <ReadScreen
+          theme={theme}
+          scannedTag={scannedTag}
+          isScanning={isScanning}
+          message={readMessage}
+          onStartScan={onStartScan}
+          onReset={() => {
+            setScannedTag(null);
+            setReadMessage('');
+          }}
+        />
+      );
     }
 
-    setMessage('Ready to write...');
-    await withNdef(async () => {
-      const bytes = Ndef.encodeMessage([Ndef.textRecord(writeText)]);
-      await NfcManager.ndefHandler.writeNdefMessage(bytes);
-      setMessage(`Wrote: "${writeText}"`);
-    }, 'Approach tag to write');
-  }, [nfcSupported, nfcEnabled, writeText]);
-
-  const getStatusColor = () => {
-    if (!nfcSupported) return theme.error;
-    if (!nfcEnabled) return theme.warning;
-    return theme.success;
-  };
-
-  const getMessageColor = () => {
-    if (message.includes('error') || message.includes('not supported')) {
-      return theme.error;
+    if (activeTab === 'WRITE') {
+      return (
+        <WriteScreen
+          theme={theme}
+          message={writeMessage}
+          isWriting={isWriting}
+          onWrite={onWrite}
+        />
+      );
     }
-    if (message.includes('Ready') || message.includes('Wrote')) {
-      return theme.success;
+
+    if (activeTab === 'OTHER') {
+      return (
+        <OtherScreen
+          theme={theme}
+          nfcSupported={nfcSupported}
+          nfcEnabled={nfcEnabled}
+        />
+      );
     }
-    return theme.primary;
+
+    return null;
   };
 
   return (
-    <SafeAreaView
-      style={[styles.container, { backgroundColor: theme.background }]}
-    >
-      <StatusBar
-        barStyle={isDarkMode ? 'light-content' : 'dark-content'}
-        backgroundColor={theme.background}
-      />
-      <ScrollView
-        contentInsetAdjustmentBehavior="automatic"
-        style={{ backgroundColor: theme.background }}
-        showsVerticalScrollIndicator={false}
+    <SafeAreaView style={[styles.root, { backgroundColor: theme.bg }]}>
+      <StatusBar barStyle={theme.barStyle} backgroundColor={theme.header} />
+
+      <View
+        style={[
+          styles.header,
+          { backgroundColor: theme.header, borderBottomColor: theme.border },
+        ]}
       >
-        {/* Header */}
-        <View style={styles.header}>
-          <Image
-            source={
-              isDarkMode
-                ? require('./assets/mcards-white.png')
-                : require('./assets/mcards.png')
-            }
-            style={styles.logo}
-            resizeMode="contain"
-          />
-          <Text style={[styles.title, { color: theme.text }]}>NFC Manager</Text>
-          <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
-            Read and write NFC tags with ease
-          </Text>
-        </View>
+        <Image source={require('./assets/logo.png')} style={styles.logo} resizeMode="contain" />
 
-        {/* Status Card */}
-        <View
-          style={[
-            styles.card,
-            {
-              backgroundColor: theme.cardBackground,
-              borderColor: theme.border,
-            },
-          ]}
-        >
-          <View style={styles.statusContainer}>
-            <View style={styles.statusItem}>
-              <View
-                style={[
-                  styles.statusIndicator,
-                  {
-                    backgroundColor: nfcSupported ? theme.success : theme.error,
-                  },
-                ]}
-              />
-              <Text style={[styles.statusLabel, { color: theme.text }]}>
-                NFC Support
-              </Text>
-              <Text style={[styles.statusValue, { color: getStatusColor() }]}>
-                {nfcSupported ? 'Available' : 'Not Available'}
-              </Text>
-            </View>
-            <View style={[styles.divider, { backgroundColor: theme.border }]} />
-            <View style={styles.statusItem}>
-              <View
-                style={[
-                  styles.statusIndicator,
-                  {
-                    backgroundColor: nfcEnabled ? theme.success : theme.warning,
-                  },
-                ]}
-              />
-              <Text style={[styles.statusLabel, { color: theme.text }]}>
-                NFC Status
-              </Text>
-              <Text style={[styles.statusValue, { color: getStatusColor() }]}>
-                {nfcEnabled ? 'Enabled' : 'Disabled'}
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Message Display */}
-        {message ? (
-          <View
-            style={[
-              styles.messageCard,
-              {
-                backgroundColor: theme.cardBackground,
-                borderColor: theme.border,
-              },
-            ]}
-          >
-            <Text style={[styles.messageText, { color: getMessageColor() }]}>
-              {message}
-            </Text>
-          </View>
-        ) : null}
-
-        {/* Read Section */}
-        <View
-          style={[
-            styles.card,
-            {
-              backgroundColor: theme.cardBackground,
-              borderColor: theme.border,
-            },
-          ]}
-        >
-          <View style={styles.sectionHeader}>
-            <Text style={[styles.sectionTitle, { color: theme.text }]}>
-              📖 Read NFC Tag
-            </Text>
-            <Text
-              style={[
-                styles.sectionDescription,
-                { color: theme.textSecondary },
-              ]}
-            >
-              Tap to scan and read data from an NFC tag
-            </Text>
-          </View>
+        <View style={styles.headerActions}>
+          {/* Help / FAQ */}
           <TouchableOpacity
-            style={[styles.primaryButton, { backgroundColor: theme.primary }]}
-            onPress={readNfc}
-            activeOpacity={0.8}
+            style={[styles.iconBtn, { backgroundColor: theme.surface, borderColor: theme.border }]}
+            onPress={() => setHelpVisible(true)}
+            activeOpacity={0.7}
           >
-            <Text style={styles.primaryButtonText}>Start Reading</Text>
+            <Text style={[styles.iconBtnText, { color: theme.text }]}>?</Text>
+          </TouchableOpacity>
+
+          {/* More menu */}
+          <TouchableOpacity
+            style={[styles.iconBtn, { backgroundColor: theme.surface, borderColor: theme.border }]}
+            onPress={() => setMenuVisible(true)}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.iconBtnText, { color: theme.text, letterSpacing: 1 }]}>•••</Text>
           </TouchableOpacity>
         </View>
+      </View>
 
-        {/* Write Section */}
-        <View
-          style={[
-            styles.card,
-            {
-              backgroundColor: theme.cardBackground,
-              borderColor: theme.border,
-            },
-          ]}
-        >
-          <View style={styles.sectionHeader}>
-            <Text style={[styles.sectionTitle, { color: theme.text }]}>
-              ✍️ Write NFC Tag
-            </Text>
-            <Text
-              style={[
-                styles.sectionDescription,
-                { color: theme.textSecondary },
-              ]}
-            >
-              Enter text and write it to an NFC tag
-            </Text>
-          </View>
-          <TextInput
-            style={[
-              styles.input,
-              {
-                backgroundColor: theme.surface,
-                borderColor: theme.border,
-                color: theme.text,
-              },
-            ]}
-            onChangeText={setWriteText}
-            value={writeText}
-            placeholder="Enter text to write to tag"
-            placeholderTextColor={theme.textTertiary}
-            multiline
-            numberOfLines={3}
-            textAlignVertical="top"
-          />
+      <View
+        style={[
+          styles.tabBar,
+          { backgroundColor: theme.tabBar, borderBottomColor: theme.border },
+        ]}
+      >
+        {(['READ', 'WRITE', 'OTHER'] as Tab[]).map(tab => (
           <TouchableOpacity
-            style={[styles.primaryButton, { backgroundColor: theme.primary }]}
-            onPress={writeNfc}
-            activeOpacity={0.8}
+            key={tab}
+            style={styles.tabItem}
+            onPress={() => setActiveTab(tab)}
+            activeOpacity={0.7}
           >
-            <Text style={styles.primaryButtonText}>Write to Tag</Text>
+            <Text style={[styles.tabLabel, { color: activeTab === tab ? theme.text : theme.muted }]}>
+              {tab}
+            </Text>
+            {activeTab === tab ? (
+              <View style={[styles.tabUnderline, { backgroundColor: theme.accent }]} />
+            ) : null}
           </TouchableOpacity>
-        </View>
+        ))}
+      </View>
 
-        {/* Tag Information */}
-        {scannedTag && (
-          <View
-            style={[
-              styles.card,
-              {
-                backgroundColor: theme.cardBackground,
-                borderColor: theme.border,
-              },
-            ]}
-          >
-            <View style={styles.sectionHeader}>
-              <Text style={[styles.sectionTitle, { color: theme.text }]}>
-                🏷️ Tag Information
-              </Text>
-              <Text
-                style={[
-                  styles.sectionDescription,
-                  { color: theme.textSecondary },
-                ]}
-              >
-                Details from the last scanned tag
-              </Text>
-            </View>
-            <View style={styles.tagInfoContainer}>
-              <View style={styles.tagInfoRow}>
-                <Text
-                  style={[styles.tagInfoLabel, { color: theme.textSecondary }]}
-                >
-                  ID:
-                </Text>
-                <Text style={[styles.tagInfoValue, { color: theme.text }]}>
-                  {scannedTag.id || 'N/A'}
-                </Text>
-              </View>
-              <View style={styles.tagInfoRow}>
-                <Text
-                  style={[styles.tagInfoLabel, { color: theme.textSecondary }]}
-                >
-                  Technologies:
-                </Text>
-                <Text style={[styles.tagInfoValue, { color: theme.text }]}>
-                  {scannedTag.techTypes?.join(', ') || 'N/A'}
-                </Text>
-              </View>
-              {scannedTag.ndefMessage && scannedTag.ndefMessage.length > 0 && (
-                <View style={styles.ndefContainer}>
-                  <Text
-                    style={[
-                      styles.tagInfoLabel,
-                      { color: theme.textSecondary },
-                    ]}
-                  >
-                    NDEF Records:
-                  </Text>
-                  {scannedTag.ndefMessage.map((record, index) => (
-                    <View key={index} style={styles.ndefRecord}>
-                      <Text
-                        style={[styles.ndefRecordText, { color: theme.text }]}
-                      >
-                        <Text style={{ fontWeight: '600' }}>Type:</Text>{' '}
-                        {record.type
-                          ? String.fromCharCode(...(record.type as number[]))
-                          : 'Unknown'}
-                      </Text>
-                      <Text
-                        style={[styles.ndefRecordText, { color: theme.text }]}
-                      >
-                        <Text style={{ fontWeight: '600' }}>Payload:</Text>{' '}
-                        {record.payload
-                          ? record.tnf === Ndef.TNF_WELL_KNOWN &&
-                            record.type.toString() === Ndef.RTD_TEXT.toString()
-                            ? Ndef.text.decodePayload(
-                                new Uint8Array(record.payload),
-                              )
-                            : Ndef.util.bytesToHexString(record.payload)
-                          : 'N/A'}
-                      </Text>
-                    </View>
-                  ))}
-                </View>
-              )}
-            </View>
-          </View>
-        )}
+      <View style={styles.fill}>{renderContent()}</View>
 
-        {/* Footer spacing */}
-        <View style={styles.footer} />
-      </ScrollView>
+      <HelpScreen
+        visible={helpVisible}
+        theme={theme}
+        onClose={() => setHelpVisible(false)}
+      />
+      <PopupMenu
+        visible={menuVisible}
+        theme={theme}
+        onClose={() => setMenuVisible(false)}
+      />
     </SafeAreaView>
   );
 };
 
+const ANDROID_EXTRA_BOTTOM = Platform.OS === 'android' ? 8 : 0;
+
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
+  root: { flex: 1, paddingBottom: ANDROID_EXTRA_BOTTOM },
+  fill: { flex: 1 },
   header: {
-    marginTop: 20,
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 40,
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderBottomWidth: 1,
   },
   logo: {
-    width: 80,
-    height: 80,
-    marginBottom: 16,
+    width: 170,
+    height: 54,
   },
-  title: {
-    fontSize: 32,
-    fontWeight: '700',
-    marginBottom: 8,
-    letterSpacing: -0.5,
-  },
-  subtitle: {
-    fontSize: 16,
-    fontWeight: '400',
-    textAlign: 'center',
-  },
-  card: {
-    marginHorizontal: 20,
-    marginBottom: 20,
-    borderRadius: 16,
-    padding: 20,
-    borderWidth: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  statusContainer: {
+  headerActions: {
     flexDirection: 'row',
-    alignItems: 'center',
+    gap: 8,
   },
-  statusItem: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  statusIndicator: {
-    width: 12,
-    height: 12,
+  iconBtn: {
+    minWidth: 38,
+    height: 38,
     borderRadius: 6,
-    marginBottom: 8,
-  },
-  statusLabel: {
-    fontSize: 14,
-    fontWeight: '500',
-    marginBottom: 4,
-  },
-  statusValue: {
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  divider: {
-    width: 1,
-    height: 40,
-    marginHorizontal: 20,
-  },
-  messageCard: {
-    marginHorizontal: 20,
-    marginBottom: 20,
-    borderRadius: 12,
-    padding: 16,
     borderWidth: 1,
-    borderLeftWidth: 4,
-  },
-  messageText: {
-    fontSize: 16,
-    fontWeight: '500',
-    textAlign: 'center',
-    lineHeight: 22,
-  },
-  sectionHeader: {
-    marginBottom: 20,
-  },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    marginBottom: 4,
-  },
-  sectionDescription: {
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  primaryButton: {
-    paddingVertical: 16,
-    paddingHorizontal: 24,
-    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#007AFF',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 4,
+    paddingHorizontal: 7,
   },
-  primaryButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-    letterSpacing: 0.2,
-  },
-  input: {
-    borderRadius: 12,
-    borderWidth: 1,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    fontSize: 16,
-    marginBottom: 16,
-    minHeight: 80,
-    textAlignVertical: 'top',
-  },
-  tagInfoContainer: {
-    gap: 12,
-  },
-  tagInfoRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-  },
-  tagInfoLabel: {
-    fontSize: 14,
-    fontWeight: '500',
-    minWidth: 80,
-  },
-  tagInfoValue: {
-    fontSize: 14,
-    flex: 1,
-    fontFamily: 'monospace',
-  },
-  ndefContainer: {
-    marginTop: 8,
-    gap: 8,
-  },
-  ndefRecord: {
-    backgroundColor: 'rgba(128, 128, 128, 0.1)',
-    padding: 12,
-    borderRadius: 8,
-    marginLeft: 12,
-  },
-  ndefRecordText: {
+  iconBtnText: {
     fontSize: 13,
-    lineHeight: 18,
-    fontFamily: 'monospace',
+    fontWeight: '700',
+    letterSpacing: -0.5,
   },
-  footer: {
-    height: 30,
+  tabBar: {
+    flexDirection: 'row',
+    borderBottomWidth: 1,
   },
+  tabItem: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 12,
+    position: 'relative',
+  },
+  tabLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+  },
+  tabUnderline: {
+    position: 'absolute',
+    bottom: 0,
+    left: 10,
+    right: 10,
+    height: 2,
+    borderRadius: 1,
+  },
+
 });
 
 export default App;

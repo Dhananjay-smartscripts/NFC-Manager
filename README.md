@@ -22,7 +22,9 @@
 ### 🎯 Core Functionality
 
 - **📖 NFC Tag Reading** - Scan and decode NDEF data from NFC tags
-- **✍️ NFC Tag Writing** - Write custom text messages to NFC tags
+- **✍️ NFC Tag Writing** - Build records from a primary write screen and write to NFC tags
+- **👤 Contact Record Support** - Write and parse contact records (MECARD)
+- **📍 Address Record Support** - Write and parse structured address records
 - **🔍 Tag Information** - View detailed tag metadata including ID, technologies, and NDEF records
 - **⚡ Real-time Status** - Live NFC support and enablement detection
 
@@ -109,14 +111,27 @@
 ## 🏗️ Project Structure
 
 ```merlin
-nfc-manager-app/
+NFC-Manager/
+├── 📄 App.tsx                     # Root app with tab navigation & header modals
 ├── 📁 src/
 │   ├── 📁 components/
-│   │   └── App.tsx                 # Main app component
+│   │   ├── PopupMenu.tsx          # Header "•••" popup menu (About Us link)
+│   │   ├── RecordRow.tsx          # Record list row
+│   │   ├── TagRow.tsx             # Tag info row
+│   │   └── NfcSymbol.tsx          # NFC symbol component
+│   ├── 📁 constants/
+│   │   └── recordTypes.ts         # Writable NFC record definitions
+│   ├── 📁 screens/
+│   │   ├── ReadScreen.tsx         # NFC read UI and parsed output
+│   │   ├── WriteScreen.tsx        # Primary write menu and form flow
+│   │   ├── OtherScreen.tsx        # Functional NFC utilities (copy/erase/lock/etc.)
+│   │   └── HelpScreen.tsx         # Help & FAQ modal
 │   ├── 📁 utils/
-│       └── withNdef.ts            # NFC utility functions
+│   │   ├── ndefBuilder.ts         # NDEF payload builder
+│   │   └── nfcHelpers.ts          # Tag utility helpers
+├── 📁 utils/
+│   └── withNdef.ts                # NFC request/session helper
 ├── 📁 android/                    # Android-specific files
-├── 📁 ios/                       # iOS-specific files
 ├── 📄 package.json
 ├── 📄 tsconfig.json
 └── 📄 README.md
@@ -135,10 +150,17 @@ nfc-manager-app/
 
 ### Writing to NFC Tags
 
-1. **Enter your text** in the input field
-2. **Tap "Write to Tag"** button
-3. **Approach the NFC tag** with your device
-4. **Confirmation message** will appear when writing is complete
+1. **Open the WRITE tab** (primary write screen)
+2. **Tap "Add a record"** and choose a type (Text, URL, Phone, Contact, Address, etc.)
+3. **Fill in record details** and tap **"Save record"**
+4. **Tap "Write / X Bytes"** from the primary write screen
+5. **Approach the NFC tag** with your device to write
+
+### Contact and Address Records
+
+- **Contact** records are written as MECARD payloads and shown in structured format on read.
+- **Address** records are written as structured `ADDR:` payloads and shown in structured format on read.
+- Older comma-separated address payloads are also parsed for backward compatibility.
 
 ### Tag Information
 
